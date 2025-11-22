@@ -1,16 +1,32 @@
-# absensiwajahdoang
+# absensi wajah
 
-A new Flutter project.
+# Role:
+    1. Admin
+    2. Dosen
+    3. Mahasiswa
 
-## Getting Started
+# Admin
+- kelola absensi = membuat:
+                    - mata kuliah
+                    - kelas
+                    - dosen pengajar
+                    edit, hapus jadwal
 
-This project is a starting point for a Flutter application.
+- laporan absensi
+- kelola mahasiswa = Tambah, edit, hapus mahasiswa
+- kelola dosen = Tambah, edit, hapus mahasiswa
+- halaman = home dan logout
 
-A few resources to get you started if this is your first Flutter project:
+# Dosen
+- melakukan pertemuan, kemudian memilih mata kuliah, scan wajah untuk membuka absen hasil dari scan wajah akan menampilkan barcode
+- mengubah status absen mahasiswa = izin, sakit, alpha
+- halaman = home, profile, dan logout
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+# mahasiswa
+- memilih mata kuliah yang akan masuk, kemudian scan barcode yang diberikan oleh dosen jika barcode valid maka akan otomatis scan wajah, jika valid akan terhitung absen.
+- halaman = home, profile, dan logout
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+# data
+data wajah, nim untuk mahasiswa, nip untuk dosen, password, username, role disimpan database atau pun ke json dan disimpan kedalam firebase jika bisa gratis
+
+#

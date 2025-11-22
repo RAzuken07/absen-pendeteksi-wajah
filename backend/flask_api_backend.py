@@ -15,7 +15,6 @@ import uuid
 app = Flask(__name__)
 CORS(app)
 
-# Path dan variabel global
 PATH_WAJAH = 'data_wajah'
 PATH_DATA = 'data'
 PATH_USERS = os.path.join(PATH_DATA, 'users.json')
@@ -63,29 +62,52 @@ PREREGISTERED_DOSEN = {
 
 # Load wajah terdaftar
 def load_known_faces():
+    """Load all known face encodings from `users.json`.
+    Backwards-compatible: also scan `data_wajah` image files if present.
+    """
     global encoded_known_faces, names
     encoded_known_faces = []
     names = []
-    
-    if not os.path.exists(PATH_WAJAH):
-        os.makedirs(PATH_WAJAH)
-        return
-    
-    print("[INFO] Memuat wajah terdaftar...")
-    for filename in os.listdir(PATH_WAJAH):
-        if filename.endswith(('.jpg', '.png', '.jpeg')):
-            img_path = os.path.join(PATH_WAJAH, filename)
-            img = cv2.imread(img_path)
-            if img is None:
-                continue
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            enc = face_recognition.face_encodings(img_rgb)
-            if enc:
-                encoded_known_faces.append(enc[0])
-                name = "_".join(os.path.splitext(filename)[0].split("_")[:-1])
-                name = name.strip().lower()
-                names.append(name)
-                print(f"[OK] {filename} → {name}")
+
+    # Load from users JSON (single consolidated store)
+    users_data = load_json_data(PATH_USERS)
+    print("[INFO] Memuat wajah terdaftar dari users.json...")
+    for user in users_data:
+        # encoding may be stored as 'encoding' (list) inside user record
+        if user and isinstance(user, dict) and 'encoding' in user and user['encoding']:
+            try:
+                encoding = np.array(user['encoding'])
+                encoded_known_faces.append(encoding)
+                # Normalize name to underscore-lowercase to keep compatibility
+                nama_key = user.get('nama') or user.get('name') or user.get('email')
+                if isinstance(nama_key, str):
+                    norm_name = nama_key.replace(' ', '_').lower()
+                else:
+                    norm_name = str(nama_key).lower()
+                names.append(norm_name)
+                print(f"[OK] {norm_name} → loaded from users.json")
+            except Exception as e:
+                print(f"[WARN] Invalid encoding for user {user}: {e}")
+
+    # Also load any remaining image files for backwards compatibility during transition
+    if os.path.exists(PATH_WAJAH):
+        print("[INFO] Memuat wajah lama dari file...")
+        for filename in os.listdir(PATH_WAJAH):
+            if filename.endswith(('.jpg', '.png', '.jpeg')):
+                # Check if this face is already in names to avoid duplicates
+                name_from_file = "_".join(os.path.splitext(filename)[0].split("_")[:-1])
+                name_from_file = name_from_file.strip().lower()
+
+                if name_from_file not in [name.lower() for name in names]:
+                    img_path = os.path.join(PATH_WAJAH, filename)
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        enc = face_recognition.face_encodings(img_rgb)
+                        if enc:
+                            encoded_known_faces.append(enc[0])
+                            names.append(name_from_file)
+                            print(f"[OK] {filename} → {name_from_file} (from file)")
 
 # Load data dari JSON
 def load_json_data(file_path):
@@ -185,103 +207,154 @@ def login():
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
-@app.route('/api/dosen/start-attendance', methods=['POST'])
-def start_attendance():
+# NOTE: The previous preregister-only `register_dosen_face` handler has been removed
+# to allow registering any dosen via the single `/api/register-dosen` endpoint.
+# The consolidated implementation lives later in this file as `register_dosen`.
+@app.route("/api/register-mahasiswa", methods=["POST"])
+def register_mahasiswa():
     try:
         data = request.json
-        dosen_id = data.get('dosen_id')
-        dosen_name = data.get('dosen_name')
-        mata_kuliah = data.get('mata_kuliah')
-        
-        # Verifikasi wajah dosen
+        # debug incoming payload
+        print(f"[DEBUG] /api/register-mahasiswa payload: {data}")
+        nama = data.get("nama")
+        nim = data.get("nim")
+        email = data.get("email")
+        password = data.get("password")
+        image = data.get("image")
+
+        if not all([nama, nim, email, password, image]):
+            return jsonify({"success": False, "message": "Data tidak lengkap"}), 400
+
+        # proses wajah
+        img = base64_to_image(image)
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        enc = face_recognition.face_encodings(rgb)
+
+        if not enc:
+            return jsonify({"success": False, "message": "Wajah tidak terdeteksi"}), 400
+
+        encoding = enc[0]
+
+        # Save user with encoding into users.json (single consolidated file)
+        users = load_json_data(PATH_USERS)
+
+        # If user exists by email, update; otherwise append new
+        existing = next((u for u in users if isinstance(u, dict) and u.get('email', '').lower() == email.lower()), None)
+        if existing:
+            existing['encoding'] = encoding.tolist()
+            existing['nama'] = nama
+            existing['nim'] = nim
+            existing['role'] = 'mahasiswa'
+            existing['password'] = password
+        else:
+            user_entry = {
+                'id': f"M{uuid.uuid4().hex[:8]}",
+                'nama': nama,
+                'email': email,
+                'nim': nim,
+                'role': 'mahasiswa',
+                'password': password,
+                'encoding': encoding.tolist(),
+                'created_at': datetime.now().isoformat()
+            }
+            users.append(user_entry)
+
+        save_json_data(PATH_USERS, users)
+
+        # Reload known faces after registration
+        load_known_faces()
+
+        return jsonify({"success": True, "message": "Registrasi mahasiswa berhasil"})
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+# ==============================
+# LOGIN DOSEN
+# ==============================
+@app.route("/api/login-dosen", methods=["POST"])
+def login_dosen():
+    data = request.json
+    email = data.get("email", "").lower()
+    password = data.get("password", "")
+
+    if email not in PREREGISTERED_DOSEN:
+        return jsonify({"success": False, "message": "Akun tidak ditemukan"}), 404
+
+    dosen = PREREGISTERED_DOSEN[email]
+
+    if password != dosen["password"]:
+        return jsonify({"success": False, "message": "Password salah"}), 400
+
+    return jsonify({
+        "success": True,
+        "message": "Login berhasil",
+        "nama": dosen["nama"],
+        "email": email,
+        "mata_kuliah": dosen["mata_kuliah"],
+        "role": "dosen"
+    })
+
+@app.route('/api/register-dosen', methods=['POST'])
+def register_dosen():
+    try:
+        data = request.json
+        # debug incoming payload
+        print(f"[DEBUG] /api/register-dosen payload: {data}")
+
+        nama = data.get('nama', '').strip()
+        nidn = data.get('nidn', '').strip()
+        mata_kuliah = data.get('mata_kuliah', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
         image_base64 = data.get('image')
-        if not image_base64:
-            return jsonify({'success': False, 'message': 'Gambar wajah diperlukan'}), 400
-        
+
+        # Validasi
+        if not nama or not nidn or not email or not image_base64:
+            return jsonify({
+                'success': False,
+                'message': 'Nama, NIDN, Email dan Gambar wajib diisi'
+            }), 400
+
+        # Convert Base64 ke gambar
         img = base64_to_image(image_base64)
         if img is None:
-            return jsonify({'success': False, 'message': 'Format gambar tidak valid'}), 400
-        
-        # Recognize face
+            return jsonify({'success': False, 'message': 'Gambar tidak valid'}), 400
+
+        # Encode wajah
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         encodings = face_recognition.face_encodings(rgb)
-        
         if not encodings:
             return jsonify({'success': False, 'message': 'Wajah tidak terdeteksi'}), 400
-        
-        # Cek apakah wajah sesuai dengan dosen
-        encode = encodings[0]
-        if len(encoded_known_faces) > 0:
-            hasil = face_recognition.compare_faces(encoded_known_faces, encode, tolerance=0.6)
-            jarak = face_recognition.face_distance(encoded_known_faces, encode)
-            
-            if len(jarak) > 0:
-                idx_match = np.argmin(jarak)
-                if hasil[idx_match]:
-                    nama_terdeteksi = names[idx_match].replace('_', ' ').lower()
-                    nama_dosen = dosen_name.lower()
-                    
-                    if nama_terdeteksi in nama_dosen or nama_dosen in nama_terdeteksi:
-                        return _create_attendance_session(dosen_id, dosen_name, mata_kuliah)
-        
-        return jsonify({'success': False, 'message': 'Wajah tidak sesuai dengan data dosen'}), 401
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
-def _create_attendance_session(dosen_id, dosen_name, mata_kuliah):
-    """Membuat sesi absen baru"""
-    try:
-        # Generate session data
-        session_id = f"SESS_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        barcode_data = {
-            'session_id': session_id,
-            'dosen_id': dosen_id,
-            'dosen_name': dosen_name,
+        # Simpan user dosen beserta encoding wajah ke users.json (consolidated)
+        users = load_json_data(PATH_USERS)
+        user_data = {
+            'id': f"D{uuid.uuid4().hex[:8]}",
+            'nama': nama,
+            'nidn': nidn,
+            'email': email,
+            'role': 'dosen',
             'mata_kuliah': mata_kuliah,
-            'timestamp': datetime.now().isoformat()
+            'password': password,
+            'encoding': encodings[0].tolist(),
+            'created_at': datetime.now().isoformat()
         }
-        
-        # Simpan session ke JSON
-        session_data = {
-            'session_id': session_id,
-            'dosen_id': dosen_id,
-            'dosen_name': dosen_name,
-            'mata_kuliah': mata_kuliah,
-            'tanggal': datetime.now().strftime('%Y-%m-%d'),
-            'waktu_mulai': datetime.now().strftime('%H:%M:%S'),
-            'barcode_data': barcode_data,
-            'is_active': True,
-            'mahasiswa_absen': []
-        }
-        
-        sessions = load_json_data(PATH_SESSIONS)
-        sessions.append(session_data)
-        save_json_data(PATH_SESSIONS, session_data)
-        
-        # Generate QR Code
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(json.dumps(barcode_data))
-        qr.make(fit=True)
-        
-        qr_img = qr.make_image(fill_color="black", back_color="white")
-        buffered = BytesIO()
-        qr_img.save(buffered, format="PNG")
-        qr_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
+        users.append(user_data)
+        save_json_data(PATH_USERS, users)
+
+        # Reload known faces
+        load_known_faces()
+
         return jsonify({
             'success': True,
-            'message': 'Sesi absen berhasil dimulai',
-            'data': {
-                'session_id': session_id,
-                'barcode_data': barcode_data,
-                'qr_code': f"data:image/png;base64,{qr_base64}",
-                # 'expires_at': (datetime.now() + timedelta(hours=2)).isoformat()
-            }
+            'message': f'Dosen {nama} berhasil didaftarkan',
+            'data': user_data
         })
-        
+
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Error membuat sesi: {str(e)}'}), 500
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 
 @app.route('/api/mahasiswa/attendance', methods=['POST'])
 def mahasiswa_attendance():
@@ -433,6 +506,8 @@ def health():
 def register_face():
     try:
         data = request.json
+        # debug incoming payload
+        print(f"[DEBUG] /api/register payload: {data}")
         nama = data.get('nama', '').strip().replace(" ", "_").lower()
         image_base64 = data.get('image')
         nim = data.get('nim', '')
@@ -452,39 +527,39 @@ def register_face():
         if not encodings:
             return jsonify({'success': False, 'message': 'Wajah tidak terdeteksi. Pastikan wajah terlihat jelas'}), 400
         
-        # Simpan gambar
-        if not os.path.exists(PATH_WAJAH):
-            os.makedirs(PATH_WAJAH)
-        
-        count = len([f for f in os.listdir(PATH_WAJAH) if f.startswith(nama)])
-        filename = f"{nama}_{count + 1}.jpg"
-        filepath = os.path.join(PATH_WAJAH, filename)
-        cv2.imwrite(filepath, img)
-        
-        # Simpan data user ke JSON
+        # Save encoding directly into users.json
         users_data = load_json_data(PATH_USERS)
         user_exists = any(u['nama'].lower() == nama.replace('_', ' ').lower() for u in users_data)
-        
-        if not user_exists:
+        user_data = None
+
+        if user_exists:
+            # Update existing user's encoding
+            for u in users_data:
+                if isinstance(u, dict) and u.get('nama','').lower() == nama.replace('_', ' ').lower():
+                    u['encoding'] = encodings[0].tolist()
+                    user_data = u
+                    break
+        else:
             user_data = {
                 'id': f"M{str(uuid.uuid4())[:8]}",
                 'nama': nama.replace('_', ' ').title(),
                 'email': f"{nama}@student.kampus.id",
                 'role': 'mahasiswa',
                 'nim': nim,
+                'encoding': encodings[0].tolist(),
                 'created_at': datetime.now().isoformat()
             }
             users_data.append(user_data)
-            save_json_data(PATH_USERS, users_data)
-        
-        # Reload wajah
+
+        save_json_data(PATH_USERS, users_data)
+
+        # Reload known faces
         load_known_faces()
-        
+
         return jsonify({
             'success': True,
             'message': f'Wajah {nama.replace("_", " ").title()} berhasil didaftarkan',
-            'filename': filename,
-            'user_data': user_data if not user_exists else None
+            'user_data': user_data
         })
     
     except Exception as e:
@@ -629,14 +704,14 @@ def get_stats():
 
 if __name__ == '__main__':
     print("=" * 50)
-    print("🚀 SISTEM ABSENSI WAJAH DENGAN ROLE - BACKEND SERVER")
+    print("SISTEM ABSENSI WAJAH DENGAN ROLE - BACKEND SERVER")
     print("=" * 50)
     initialize_data()
     load_known_faces()
-    print(f"\n✅ Server siap di: http://192.168.1.14:5000")
-    print(f"📊 Total wajah terdaftar: {len(set(names))}")
-    print(f"👨‍🏫 Dosen terdaftar: {len(PREREGISTERED_DOSEN)}")
-    print("\n🔐 Login Dosen:")
+    print(f"\nServer siap di: http://10.91.229.67:5000")
+    print(f"Total wajah terdaftar: {len(set(names))}")
+    print(f"Dosen terdaftar: {len(PREREGISTERED_DOSEN)}")
+    print("Login Dosen:")
     for email, data in PREREGISTERED_DOSEN.items():
         print(f"   Email: {email} | Password: {data['password']}")
     print("=" * 50 + "\n")

@@ -3,6 +3,7 @@ import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+
 import '../services/api_service.dart';
 import '../services/face_storage_service.dart';
 import '../models/face_data.dart';
@@ -16,13 +17,21 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   late CameraController _cameraController;
+
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _nimController = TextEditingController();
+  final TextEditingController _nidnController = TextEditingController();
+  final TextEditingController _mataKuliahController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
   final ImagePicker _imagePicker = ImagePicker();
+
   bool _isCameraInitialized = false;
   bool _isProcessing = false;
+
   XFile? _selectedImage;
-  String? _statusMessage;
-  bool _isSuccess = false;
+  String selectedRole = "mahasiswa"; // default
 
   @override
   void initState() {
@@ -33,71 +42,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _initializeCamera() async {
     try {
       final cameras = await availableCameras();
-      if (cameras.isNotEmpty) {
-        // Cari kamera depan (front camera)
-        final frontCamera = cameras.firstWhere(
-          (camera) => camera.lensDirection == CameraLensDirection.front,
-          orElse: () => cameras[
-              0], // Fallback ke kamera pertama jika tidak ada front camera
-        );
 
-        _cameraController = CameraController(
-          frontCamera,
-          ResolutionPreset.medium,
-        );
+      final frontCamera = cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras[0],
+      );
 
-        await _cameraController.initialize();
-        if (mounted) {
-          setState(() {
-            _isCameraInitialized = true;
-          });
-        }
-      }
+      _cameraController = CameraController(
+        frontCamera,
+        ResolutionPreset.medium,
+      );
+
+      await _cameraController.initialize();
+
+      setState(() => _isCameraInitialized = true);
     } catch (e) {
-      _showSnackBar('Gagal menginisialisasi kamera: $e', false);
+      _showSnackBar("Kamera gagal diinisialisasi", false);
     }
   }
 
   Future<void> _captureImage() async {
     try {
       final image = await _cameraController.takePicture();
-      if (mounted) {
-        setState(() => _selectedImage = image);
-      }
+      setState(() => _selectedImage = image);
     } catch (e) {
-      _showSnackBar('Error: $e', false);
+      _showSnackBar("Gagal mengambil foto", false);
     }
   }
 
   Future<void> _pickImageFromGallery() async {
     try {
       final image = await _imagePicker.pickImage(source: ImageSource.gallery);
-      if (image != null && mounted) {
+      if (image != null) {
         setState(() => _selectedImage = image);
       }
     } catch (e) {
-      _showSnackBar('Error: $e', false);
+      _showSnackBar("Gagal memilih foto", false);
     }
   }
 
   Future<void> _registerFace() async {
     if (_nameController.text.isEmpty) {
-      _showSnackBar('Masukkan nama terlebih dahulu', false);
+      _showSnackBar("Nama wajib diisi", false);
+      return;
+    }
+
+    if (selectedRole == "mahasiswa" && _nimController.text.isEmpty) {
+      _showSnackBar("NIM wajib diisi untuk Mahasiswa", false);
+      return;
+    }
+
+    if (selectedRole == "dosen" &&
+        (_nidnController.text.isEmpty || _mataKuliahController.text.isEmpty)) {
+      _showSnackBar("NIDN & Mata Kuliah wajib diisi untuk Dosen", false);
       return;
     }
 
     if (_selectedImage == null) {
-      _showSnackBar('Ambil/pilih foto terlebih dahulu', false);
+      _showSnackBar("Ambil/pilih foto terlebih dahulu", false);
       return;
     }
 
-    try {
-      setState(() => _isProcessing = true);
+    if (_emailController.text.isEmpty) {
+      _showSnackBar("Email wajib diisi", false);
+      return;
+    }
 
+    if (_passwordController.text.isEmpty) {
+      _showSnackBar("Password wajib diisi", false);
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+
+    try {
       final imageBytes = await _selectedImage!.readAsBytes();
       final base64Image = base64Encode(imageBytes);
 
-      // Simpan ke JSON lokal
+      // ===== Simpan lokal JSON =====
       final faceData = FaceData(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         nama: _nameController.text,
@@ -105,252 +127,214 @@ class _RegisterScreenState extends State<RegisterScreen> {
         createdAt: DateTime.now(),
       );
 
-      final savedToJson = await FaceStorageService.saveFaceData(faceData);
+      await FaceStorageService.saveFaceData(faceData);
 
-      // Kirim ke API
-      final result = await ApiService.registerFace(
-        _nameController.text,
-        base64Image,
-      );
+      // ===== Kirim ke API sesuai role =====
+      Map<String, dynamic> result;
 
-      if (mounted) {
-        if (result['success'] == true || savedToJson) {
-          setState(() {
-            _statusMessage = 'Registrasi berhasil!';
-            _isSuccess = true;
-          });
+      if (selectedRole == "mahasiswa") {
+        result = await ApiService.registerMahasiswa(
+          _nameController.text,
+          _nimController.text,
+          _emailController.text,
+          _passwordController.text,
+          base64Image,
+        );
+      } else {
+        result = await ApiService.registerDosen(
+          _nameController.text,
+          _nidnController.text,
+          _emailController.text,
+          _passwordController.text,
+          _mataKuliahController.text,
+          base64Image,
+        );
+      }
 
-          _showSnackBar(
-            'User ${_nameController.text} berhasil didaftarkan',
-            true,
-          );
+      if (result["success"] == true) {
+        _showSnackBar("Registrasi berhasil!", true);
 
-          await Future.delayed(const Duration(seconds: 2));
-          if (mounted) {
-            Navigator.pop(context);
-          }
-        } else {
-          _showSnackBar(
-            result['message'] ?? 'Registrasi gagal',
-            false,
-          );
-        }
+        await Future.delayed(const Duration(seconds: 2));
+        Navigator.pop(context);
+      } else {
+        _showSnackBar(result["message"] ?? "Registrasi gagal", false);
       }
     } catch (e) {
-      _showSnackBar('Error: $e', false);
+      _showSnackBar("Terjadi error: $e", false);
     } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      setState(() => _isProcessing = false);
     }
   }
 
-  void _showSnackBar(String message, bool isSuccess) {
+  void _showSnackBar(String message, bool success) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isSuccess ? Colors.green : Colors.red,
-        duration: const Duration(seconds: 3),
+        backgroundColor: success ? Colors.green : Colors.red,
       ),
     );
-  }
-
-  void _resetForm() {
-    setState(() {
-      _nameController.clear();
-      _selectedImage = null;
-      _statusMessage = null;
-      _isSuccess = false;
-    });
   }
 
   @override
   void dispose() {
     _cameraController.dispose();
     _nameController.dispose();
+    _nimController.dispose();
+    _nidnController.dispose();
+    _mataKuliahController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Registrasi Wajah'),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text("Registrasi User")),
       body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            children: [
-              // Preview Image
-              if (_selectedImage != null)
-                Card(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Image.file(
-                      File(_selectedImage!.path),
-                      width: double.infinity,
-                      height: 300,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                )
-              else if (_isCameraInitialized)
-                Card(
-                  child: SizedBox(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            // ================= ROLE DROPDOWN =================
+            DropdownButtonFormField<String>(
+              value: selectedRole,
+              items: const [
+                DropdownMenuItem(value: "mahasiswa", child: Text("Mahasiswa")),
+                DropdownMenuItem(value: "dosen", child: Text("Dosen")),
+              ],
+              onChanged: (v) => setState(() => selectedRole = v!),
+              decoration: InputDecoration(
+                labelText: "Pilih Role",
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ================= CAMERA / IMAGE =================
+            _selectedImage != null
+                ? Image.file(
+                    File(_selectedImage!.path),
                     width: double.infinity,
                     height: 300,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: CameraPreview(_cameraController),
+                    fit: BoxFit.cover,
+                  )
+                : _isCameraInitialized
+                    ? SizedBox(
+                        width: double.infinity,
+                        height: 300,
+                        child: CameraPreview(_cameraController),
+                      )
+                    : const CircularProgressIndicator(),
+
+            const SizedBox(height: 16),
+
+            if (_selectedImage == null)
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _captureImage,
+                      icon: Icon(Icons.camera_alt),
+                      label: Text("Ambil Foto"),
                     ),
                   ),
-                )
-              else
-                Card(
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 300,
-                    child: const Center(
-                      child: CircularProgressIndicator(),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _pickImageFromGallery,
+                      icon: Icon(Icons.image),
+                      label: Text("Galeri"),
                     ),
                   ),
-                ),
-
-              const SizedBox(height: 20),
-
-              // Camera Controls
-              if (_selectedImage == null)
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _captureImage,
-                        icon: const Icon(Icons.camera_alt),
-                        label: const Text('Ambil Foto'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          backgroundColor: Colors.blue,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _pickImageFromGallery,
-                        icon: const Icon(Icons.image),
-                        label: const Text('Pilih Galeri'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          backgroundColor: Colors.orange,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-              const SizedBox(height: 20),
-
-              // Name Input
-              TextField(
-                controller: _nameController,
-                enabled: !_isProcessing,
-                decoration: InputDecoration(
-                  labelText: 'Nama Pengguna',
-                  prefixIcon: const Icon(Icons.person),
-                  hintText: 'Masukkan nama lengkap',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
+                ],
               ),
 
-              const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-              // Action Buttons
-              if (_selectedImage != null)
-                Column(
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: _isProcessing ? null : _registerFace,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          disabledBackgroundColor: Colors.grey,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: _isProcessing
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
-                                  ),
-                                ),
-                              )
-                            : const Text(
-                                'Daftar',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: OutlinedButton(
-                        onPressed: _isProcessing ? null : _resetForm,
-                        style: OutlinedButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Batal'),
-                      ),
-                    ),
-                  ],
-                ),
+            // ================= FORM NAMA =================
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                labelText: "Nama Lengkap",
+                prefixIcon: Icon(Icons.person),
+                border: OutlineInputBorder(),
+              ),
+            ),
 
-              // Status Message
-              if (_statusMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 20),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: _isSuccess
-                          ? Colors.green.withOpacity(0.1)
-                          : Colors.red.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _isSuccess
-                            ? Colors.green.withOpacity(0.5)
-                            : Colors.red.withOpacity(0.5),
-                      ),
-                    ),
-                    child: Text(
-                      _statusMessage ?? '',
-                      style: TextStyle(
-                        color: _isSuccess ? Colors.green : Colors.red,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
+            const SizedBox(height: 16),
+
+            // ================= FORM MAHASISWA =================
+            if (selectedRole == "mahasiswa") ...[
+              TextField(
+                controller: _nimController,
+                decoration: InputDecoration(
+                  labelText: "NIM Mahasiswa",
+                  prefixIcon: Icon(Icons.badge),
+                  border: OutlineInputBorder(),
                 ),
+              ),
+              const SizedBox(height: 16),
             ],
-          ),
+
+            // ================= FORM DOSEN =================
+            if (selectedRole == "dosen") ...[
+              TextField(
+                controller: _nidnController,
+                decoration: InputDecoration(
+                  labelText: "NIDN Dosen",
+                  prefixIcon: Icon(Icons.badge),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextField(
+                controller: _mataKuliahController,
+                decoration: InputDecoration(
+                  labelText: "Mata Kuliah",
+                  prefixIcon: Icon(Icons.book),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // ================= EMAIL & PASSWORD (SEMUA ROLE) =================
+            TextField(
+              controller: _emailController,
+              decoration: InputDecoration(
+                labelText: "Email",
+                prefixIcon: Icon(Icons.email),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            TextField(
+              controller: _passwordController,
+              decoration: InputDecoration(
+                labelText: "Password",
+                prefixIcon: Icon(Icons.lock),
+                border: OutlineInputBorder(),
+              ),
+              obscureText: true,
+            ),
+
+            const SizedBox(height: 24),
+
+            // ================= BUTTON REGISTER =================
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isProcessing ? null : _registerFace,
+                child: _isProcessing
+                    ? CircularProgressIndicator(color: Colors.white)
+                    : Text("Daftar User"),
+              ),
+            ),
+          ],
         ),
       ),
     );

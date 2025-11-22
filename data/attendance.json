@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "id": "d7b62ea5-63ce-4c3c-af7f-08e2892e5a1d",
+    "nama": "Rizky",
+    "tanggal": "2025-11-19",
+    "waktu": "11:20:00",
+    "status": "hadir",
+    "type": "direct"
+  },
+  {
+    "id": "8f5b13df-5789-4784-985a-0295b56927f6",
+    "nama": "Ichsan M",
+    "tanggal": "2025-11-20",
+    "waktu": "14:12:01",
+    "status": "hadir",
+    "type": "direct"
+  },
+  {
+    "id": "56bc7108-a32f-4d08-a020-af7d9a5f7923",
+    "nama": "Rizky",
+    "tanggal": "2025-11-20",
+    "waktu": "14:17:02",
+    "status": "hadir",
+    "type": "direct"
+  }
+]

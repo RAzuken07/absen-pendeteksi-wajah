@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.1.14:5000/api';
+  static const String baseUrl = 'http://10.91.229.67:5000/api';
 
   // Health check
   static Future<Map<String, dynamic>> checkHealth() async {
@@ -78,6 +78,7 @@ class ApiService {
     }
   }
 
+  // LOGIN
   static Future<Map<String, dynamic>> login(
       String email, String password, String role) async {
     try {
@@ -96,6 +97,7 @@ class ApiService {
     }
   }
 
+  // START ABSENSI DOSEN
   static Future<Map<String, dynamic>> startDosenAttendance(String dosenId,
       String dosenName, String mataKuliah, String imageBase64) async {
     try {
@@ -109,12 +111,14 @@ class ApiService {
           'image': imageBase64,
         }),
       );
+
       return jsonDecode(response.body);
     } catch (e) {
       return {'success': false, 'message': 'Koneksi gagal: ${e.toString()}'};
     }
   }
 
+  // ABSENSI MAHASISWA
   static Future<Map<String, dynamic>> mahasiswaAttendance(String mahasiswaId,
       String sessionId, String barcodeData, String imageBase64) async {
     try {
@@ -128,28 +132,60 @@ class ApiService {
           'image': imageBase64,
         }),
       );
+
       return jsonDecode(response.body);
     } catch (e) {
       return {'success': false, 'message': 'Koneksi gagal: ${e.toString()}'};
     }
   }
 
-  static Future<Map<String, dynamic>> MahasiswaAttendance(String mahasiswaId,
-      String sessionId, String barcodeData, String imageBase64) async {
+  // REGISTER MAHASISWA - uses the general register endpoint
+  static Future<Map<String, dynamic>> registerMahasiswa(String nama, String nim,
+      String email, String password, String imageBase64) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/mahasiswa/attendance'),
+        Uri.parse('$baseUrl/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'mahasiswa_id': mahasiswaId,
-          'session_id': sessionId,
-          'barcode_data': barcodeData,
+          'nama': nama,
+          'nim': nim,
+          'email': email,
+          'password': password,
           'image': imageBase64,
         }),
       );
+
       return jsonDecode(response.body);
     } catch (e) {
-      return {'success': false, 'message': 'Koneksi gagal: ${e.toString()}'};
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // REGISTER DOSEN - uses the register-dosen endpoint
+  static Future<Map<String, dynamic>> registerDosen(
+      String nama,
+      String nidn,
+      String email,
+      String password,
+      String mataKuliah,
+      String imageBase64) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/register-dosen'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'nama': nama,
+          'nidn': nidn,
+          'email': email,
+          'password': password,
+          'mata_kuliah': mataKuliah,
+          'image': imageBase64,
+        }),
+      );
+
+      return jsonDecode(response.body);
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
     }
   }
 }

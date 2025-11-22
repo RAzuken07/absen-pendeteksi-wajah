@@ -19,16 +19,33 @@ class User {
     required this.createdAt,
   });
 
+  // Fungsi yang aman untuk handle String / List / null
+  static String? parseToString(dynamic value) {
+    if (value == null) return null;
+
+    // Kalau List -> ambil item pertama
+    if (value is List) {
+      if (value.isEmpty) return null;
+      return value.first.toString();
+    }
+
+    // Kalau String -> langsung
+    if (value is String) return value;
+
+    // Jenis lain -> konversi ke string
+    return value.toString();
+  }
+
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: json['id'] ?? '',
-      nama: json['nama'] ?? '',
-      email: json['email'] ?? '',
-      role: json['role'] ?? '',
-      nim: json['nim'],
-      nidn: json['nidn'],
-      mataKuliah: json['mata_kuliah'],
-      createdAt: json['created_at'] != null 
+      id: parseToString(json['id']) ?? '',
+      nama: parseToString(json['nama']) ?? '',
+      email: parseToString(json['email']) ?? '',
+      role: parseToString(json['role']) ?? '',
+      nim: parseToString(json['nim']),
+      nidn: parseToString(json['nidn']),
+      mataKuliah: parseToString(json['mata_kuliah']),
+      createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : DateTime.now(),
     );
